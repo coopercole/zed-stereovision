@@ -12,13 +12,14 @@ import datetime
 MILLIMETERS_TO_INCHES = 0.0393701
 FRACTIONAL_PRECISION = 16
 ZED2_BASELINE = 120  # mm
-MARKER_SIZE = 0.3  # meters
+MARKER_WIDTH = 0.3  # meters
+k = 293 # mm
 PRINT_DATA = False
 WRITE_TO_CSV = True
 SHOW_IMAGE = True
 PROCESS_IMAGE = True
 SET_MIN_DIST = False
-GET_YAW = True
+GET_YAW = False
 
 
 def getMousePos(image):
@@ -90,11 +91,11 @@ def find_aruco_marker(image, aruco_dict, parameters, cameraMatrix, distCoeffs):
         # x_start = 200
         # x_end = 800
         
-        ## BEDROOM HD2K 10 ft
-        y_start = 400
-        y_end = 800
-        x_start = 800
-        x_end = 1400
+        # ## BEDROOM HD2K 10 ft
+        # y_start = 400
+        # y_end = 800
+        # x_start = 800
+        # x_end = 1400
 
         ## BEDROOM HD2K 10 ft wider view
         y_start = 400
@@ -145,12 +146,16 @@ def find_aruco_marker(image, aruco_dict, parameters, cameraMatrix, distCoeffs):
     if ids is not None:
         # Get the center coordinates of the first detected marker
         marker_center = np.mean(corners[0][0], axis=0)
+        marker_right_middle = np.mean(corners[0][0][1:3], axis=0)
+        print(f"Center of the aruco marker: {marker_center}")
+        print(f"Right Middle of the aruco marker: {marker_right_middle}")
         x = int(marker_center[0]) + x_start # add on the x_start to get the coordinates in the uncropped image
         y = int(marker_center[1]) + y_start # add on the y_start to get the coordinates in the uncropped image
+        x_right_middle = int(marker_right_middle[0]) + x_start # add on the x_start to get the coordinates in the uncropped image
 
         if GET_YAW:
             # Estimate the pose of the ArUco marker
-            rvecs, tvecs, _ = aruco.estimatePoseSingleMarkers(corners, MARKER_SIZE, cameraMatrix, distCoeffs)
+            rvecs, tvecs, _ = aruco.estimatePoseSingleMarkers(corners, MARKER_WIDTH, cameraMatrix, distCoeffs)
 
             # Get the rotation vector and translation vector of the first detected marker
             rvec = rvecs[0][0]
@@ -182,7 +187,7 @@ def find_aruco_marker(image, aruco_dict, parameters, cameraMatrix, distCoeffs):
         cv2.destroyAllWindows()
 
         # return the coordinates of the center of the aruco marker for depth sensing, and yaw angle
-        return x, y
+        return x, y, x_right_middle
     else:
         print("---------NO ARUCO MARKER DETECTED---------")
         return None
@@ -190,67 +195,24 @@ def find_aruco_marker(image, aruco_dict, parameters, cameraMatrix, distCoeffs):
 def get_z_depth(depth, x, y):
     # Get the depth value at the detected point
     err, z = depth.get_value(x, y)
-
-    z_inches = mm_to_feet_inches_fractions(z)
-    print(f"Z Depth to Target: {z_inches}, {round(z, 2)} mm")
-
     return z
 
-def get_x_distance(point_cloud_value):
-    # THIS IS FLAWED, IT MEASURES THE DISTNACE IN THE FRAME, SO YAW AFFECTS IT
+def get_x_distance(point_cloud, x, y):
+    err, point_cloud_value = point_cloud.get_value(x, y)
 
     # get the lateral distance to the target using the point cloud value of the center of the target
-    x_distance = point_cloud_value[0] + ZED2_BASELINE/2 if point_cloud_value[0] <= 0 else point_cloud_value[0] - ZED2_BASELINE/2
+    # x_distance = point_cloud_value[0] if point_cloud_value[0] <= 0 else point_cloud_value[0] - ZED2_BASELINE/2
+    if err == sl.ERROR_CODE.SUCCESS: 
+        x_distance = point_cloud_value[0]
+        return round(x_distance, 2)
     
-
-    lateral_distance_inches = mm_to_feet_inches_fractions(x_distance)
-    # print(f"X Distance to Target: {lateral_distance_inches}, {round(lateral_distance, 2)} mm")
-
-    return round(x_distance, 2)
-
-def get_camera_yaw(x, z):
-    # Get the yaw angle of the camera using a triangle formed by the x and z coordinates
-    yaw = math.atan2(-x, z)
-    yaw_degrees = np.round(math.degrees(yaw),2)
-    print(f"Yaw of the Camera: {yaw_degrees}°")
-    return yaw_degrees
-
-def get_aruco_target_yaw(image, aruco_dict, parameters, cameraMatrix, distCoeffs):
-    # USES THE YAW ANGLE OF THE ARUCO MARKER TO DETERMINE THE YAW ANGLE OF THE TARGET,
-    # THIS ISN'T GREAT, ARUCO MARKER DOESN"T SHOW SQUARE VERY WELL AND ORIENTATION CALCULATION ISN'T GREAT
-    # ------------------ NOT USED ------------------ 
-
-    # Convert the image to grayscale
-    gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    # Convert the image to a numpy array
-    gray_image = gray_image.astype(np.uint8)
-
-    # Detect the aruco markers in the frame
-    corners, ids, rejected = aruco.detectMarkers(gray_image, aruco_dict, parameters=parameters)
-
-    # If any markers are detected
-    if ids is not None:
-        # Estimate the pose of the ArUco marker
-        rvecs, tvecs, _ = aruco.estimatePoseSingleMarkers(corners, 0.05, cameraMatrix, distCoeffs)
-
-        # Get the rotation vector and translation vector of the first detected marker
-        rvec = rvecs[0][0]
-        # tvec = tvecs[0][0] ## not used
-
-        # Convert the rotation vector to a rotation matrix
-        rotation_matrix, _ = cv2.Rodrigues(rvec)
-
-        # Get what I think is the yaw from the rotation matrix
-        yaw = math.atan2(-rotation_matrix[2, 0], math.sqrt(rotation_matrix[2, 1]**2 + rotation_matrix[2, 2]**2))
-        # Convert the angles from radians to degrees
-        yaw_degrees = round(math.degrees(yaw), 2)
-
-        # Print the orientation angles
-        if(PRINT_DATA): print(f"Yaw angle of the ArUco marker: {yaw_degrees}°")
-
-        return yaw_degrees
-
     return None
+
+def get_yaw(z1, z2):
+    x0 = MARKER_WIDTH/2
+    yaw = math.asin((z2-z1)/x0)
+    yaw_degrees = np.round(math.degrees(yaw),2)
+    return yaw_degrees
 
 def write_to_csv(data):
     # Write the data to a CSV file
@@ -331,19 +293,35 @@ def main():
         image_data = image.get_data()
 
         # detect center of the aruco marker
-        x, y = find_aruco_marker(image_data, aruco_dict, parameters, cameraMatrix, distCoeffs)
-
-        # Get the depth value at the detected point
-        err, point_cloud_value = point_cloud.get_value(x, y)
-        get_x_distance(point_cloud_value)
+        center_x, center_y, center_x_right = find_aruco_marker(image_data, aruco_dict, parameters, cameraMatrix, distCoeffs)
 
         print(f"----------------DEPTH------------------------")
-        z = get_z_depth(depth, x, y)
-        print(f"----------------Lateral Distance------------------------")
-        x_distance = get_x_distance(point_cloud_value)
-        print(f"X Distance to Target: {x_distance} mm")
+        z1 = get_z_depth(depth, center_x, center_y)
+        z2 = get_z_depth(depth, center_x_right, center_y)
+        z1_inches = mm_to_feet_inches_fractions(z1)
+        z2_inches = mm_to_feet_inches_fractions(z2)
+        print(f"Z Depth to Target: {z1_inches}, {round(z1, 2)} mm")
+        print(f"Z Depth to Target Right: {z2_inches}, {round(z2, 2)} mm")
+        print(f"----------------X Distance------------------------")
+        x1 = get_x_distance(point_cloud, center_x, center_y)
+        x2 = get_x_distance(point_cloud, center_x_right, center_y)
+        x1_inches = mm_to_feet_inches_fractions(x1)
+        x2_inches = mm_to_feet_inches_fractions(x2)
+        print(f"X Distance to Target: {x1_inches}, {round(x1, 2)} mm")
+        print(f"X Distance to Target Right: {x2_inches}, {round(x2, 2)} mm")
         print(f"----------------YAW------------------------")
-        yaw = get_camera_yaw(point_cloud_value[0], z)
+        yaw = get_yaw(z1, z2)
+        print(f"Yaw: {yaw}°")
+
+        print(f"----------------Final Values------------------------")
+        z3 = k * math.cos(math.radians(yaw))
+        x3 = k * math.sin(math.radians(yaw))
+        Z = z1 + z3
+        X = x1 - x3
+        print(f"Z: {Z}, {mm_to_feet_inches_fractions(Z)}")
+        print(f"X: {X}, {mm_to_feet_inches_fractions(X)}")
+        print(f"Yaw: {yaw}°")
+        print(f"----------------END------------------------")
 
         # # TESTING BEGIN
         # print(f"----------------TESTING------------------------")
@@ -358,7 +336,7 @@ def main():
         # # TESTING END
 
 
-        data = [z, x_distance, yaw]
+        data = [Z, X, yaw]
         write_to_csv(data)
 
     # Close the camera
