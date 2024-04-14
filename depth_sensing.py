@@ -9,10 +9,11 @@ import csv
 import os
 import datetime
 
+
 MILLIMETERS_TO_INCHES = 0.0393701
 FRACTIONAL_PRECISION = 16
 ZED2_BASELINE = 120  # mm
-MARKER_WIDTH = 0.3  # meters
+MARKER_WIDTH = 300  # mm
 k = 293 # mm
 PRINT_DATA = False
 WRITE_TO_CSV = True
@@ -20,6 +21,8 @@ SHOW_IMAGE = True
 PROCESS_IMAGE = True
 SET_MIN_DIST = False
 GET_YAW = False
+# Define the checkerboard dimensions
+CHECKERBOARD_SIZE = (3, 3)
 
 
 def getMousePos(image):
@@ -29,17 +32,24 @@ def getMousePos(image):
             param['y'] = y
             param['event'] = event
 
+
+
+    y_start = 600
+    y_end = 800
+    x_start = 1000
+    x_end = 1200
     param = {'x': -1, 'y': -1, 'event': -1}
     cv2.namedWindow("Image")
     cv2.setMouseCallback("Image", onMouse, param)
-    cv2.imshow("Image", image)
+    cv2.imshow("Image", image[y_start:y_end, x_start:x_end])
 
     while param['event'] != cv2.EVENT_LBUTTONDOWN:
         cv2.waitKey(10)
     
     cv2.destroyWindow("Image")
+    print(f"Chosen point: {{{param['x'] + x_start};{param['y'] + y_start}}}")
 
-    return param['x'], param['y']
+    return param['x'] + x_start, param['y'] + y_start
 
 def mm_to_feet_inches_fractions(mm):
     # Convert mm to inches
@@ -82,32 +92,97 @@ def get_camera_matrix_and_distortion(camera):
 
     return cameraMatrix, distCoeffs
 
+def find_checkerboard(image):
+    ## IMAGE PROCESSING BEGIN ##
+    # Define the region of interest for the checkerboard
+    # # OUTSIDE HD2K 51.5 ft
+    # y_start = 200
+    # y_end = 600
+    # x_start = 200
+    # x_end = 800
+    # ## BEDROOM HD2K 10 ft
+    y_start = 600
+    y_end = 800
+    x_start = 800
+    x_end = 1400
+
+    # Convert the image to grayscale
+    gray = cv2.cvtColor(image[y_start:y_end, x_start:x_end], cv2.COLOR_BGR2GRAY)
+    #make gray 8 bit
+    gray = np.uint8(gray)
+    # gray = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
+    # gray = cv2.medianBlur(gray, 5)
+    
+    # gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    cv2.imshow("Gray Image", gray)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+
+    # Find the checkerboard corners
+    # ret, corners = cv2.findChessboardCorners(gray, (3, 3), flags=cv2.CALIB_CB_ADAPTIVE_THRESH + cv2.CALIB_CB_NORMALIZE_IMAGE)
+    ret, corners = cv2.findChessboardCorners(gray, (3, 3))
+    print(f"Checkerboard Corners Found: {ret}")
+    # If the checkerboard corners are found
+    if ret:
+        # Refine the corner locations
+        corners = cv2.cornerSubPix(gray, corners, (11, 11), (-1, -1), (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001))
+        # Draw the checkerboard corners on the image
+        cv2.drawChessboardCorners(gray, CHECKERBOARD_SIZE, corners, ret)
+
+        # imgpts, jac = cv2.projectPoints(axis, rvecs, tvecs, cameraMatrix, distCoeffs)
+        cv2.imshow("Checkerboard Corners", gray)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
+        # Return the x and y coordinates of the center of the checkerboard
+        x = corners[0][0][0] + x_start
+        y = corners[0][0][1] + y_start
+        # get the middle right edge of the checkerboard
+        x_right_middle = corners[0][1][0] + x_start
+
+        return x, y, x_right_middle
+    else:
+        return None
+
 def find_aruco_marker(image, aruco_dict, parameters, cameraMatrix, distCoeffs):
 
     if PROCESS_IMAGE:
-        ## OUTSIDE HD2K 51.5 ft
+        # # OUTSIDE HD2K 51.5 ft
         # y_start = 200
         # y_end = 600
         # x_start = 200
         # x_end = 800
         
-        # ## BEDROOM HD2K 10 ft
-        # y_start = 400
-        # y_end = 800
-        # x_start = 800
-        # x_end = 1400
 
-        ## BEDROOM HD2K 10 ft wider view
-        y_start = 400
-        y_end = 800
-        x_start = 400
-        x_end = 1800
+
+        # ## BEDROOM HD2K 10 ft wider view
+        y_start = 625
+        y_end = 725
+        x_start = 1025
+        x_end = 1125
 
         ## ----- IMAGE PROCESSING BEGIN ----- ##
         # Crop the image and convert it to grayscale
         gray = cv2.cvtColor(image[y_start:y_end, x_start:x_end], cv2.COLOR_BGR2GRAY)
         # Apply bilateral filter to the gray image
         bilateral_filtered = cv2.bilateralFilter(gray, 9, 75, 75)
+        
+        # conver to hsv
+        # hsv = cv2.cvtColor(image[y_start:y_end, x_start:x_end], cv2.COLOR_BGR2HSV)
+        # lower_white = np.array([0, 0, 0], dtype=np.uint8)
+        # upper_white = np.array([0, 0, 255], dtype=np.uint8)
+        # lower_black = np.array([0, 0, 0], dtype=np.uint8)
+        # upper_black = np.array([180, 255, 30], dtype=np.uint8)
+        # mask_white = cv2.inRange(hsv, lower_white, upper_white)
+        # mask_black = cv2.inRange(hsv, lower_black, upper_black)
+        # mask = cv2.bitwise_or(mask_white, mask_black)
+        # res = cv2.bitwise_and(image[y_start:y_end, x_start:x_end], image[y_start:y_end, x_start:x_end], mask=mask)
+        # gray = cv2.cvtColor(res, cv2.COLOR_BGR2GRAY)
+
+        
+        # Apply adaptive thresholding to segment the black and white aruco marker
+        # adaptive_threshold = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
+        # gray = cv2.medianBlur(gray, 5)
+        # adaptive_threshold = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
         # if SHOW_IMAGE:
         #     cv2.imshow("Cropped, Gray and Filtered Image", bilateral_filtered)
         #     cv2.waitKey(0)
@@ -131,7 +206,10 @@ def find_aruco_marker(image, aruco_dict, parameters, cameraMatrix, distCoeffs):
 
         # Rename for clarity
         # processed_image = closing
-        processed_image = bilateral_filtered
+        processed_image = gray
+        cv2.imshow("Processed Image", processed_image)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
         ## IMAGE PROCESSING END
 
     else:
@@ -152,29 +230,6 @@ def find_aruco_marker(image, aruco_dict, parameters, cameraMatrix, distCoeffs):
         x = int(marker_center[0]) + x_start # add on the x_start to get the coordinates in the uncropped image
         y = int(marker_center[1]) + y_start # add on the y_start to get the coordinates in the uncropped image
         x_right_middle = int(marker_right_middle[0]) + x_start # add on the x_start to get the coordinates in the uncropped image
-
-        if GET_YAW:
-            # Estimate the pose of the ArUco marker
-            rvecs, tvecs, _ = aruco.estimatePoseSingleMarkers(corners, MARKER_WIDTH, cameraMatrix, distCoeffs)
-
-            # Get the rotation vector and translation vector of the first detected marker
-            rvec = rvecs[0][0]
-            tvec = tvecs[0][0] ## not used
-
-            # Convert the rotation vector to a rotation matrix
-            rotation_matrix, _ = cv2.Rodrigues(rvec)
-
-            # Get the yaw from the rotation matrix
-            yaw = math.atan2(-rotation_matrix[2, 0], math.sqrt(rotation_matrix[2, 1]**2 + rotation_matrix[2, 2]**2))
-            # Convert the angles from radians to degrees
-            yaw_degrees = round(math.degrees(yaw), 2)
-            print(f"Yaw angle of the ArUco marker: {yaw_degrees}°")
-
-            marker_axis = cv2.drawFrameAxes(processed_image, cameraMatrix, distCoeffs, rvec, tvec, 0.1)
-            cv2.imshow("Processsed Image with Yaw", marker_axis)
-            cv2.waitKey(0)
-            cv2.destroyAllWindows()
-
 
         if PRINT_DATA: print(f"Center of the aruco marker: {{{x};{y}}}")
         
@@ -209,8 +264,13 @@ def get_x_distance(point_cloud, x, y):
     return None
 
 def get_yaw(z1, z2):
-    x0 = MARKER_WIDTH/2
-    yaw = math.asin((z2-z1)/x0)
+    x0 = MARKER_WIDTH / 2
+    # print(f"X0: {x0}")
+    # print(f"Z1: {z1}")
+    # print(f"Z2: {z2}")
+    # print(f"Z2-Z1: {z2-z1}")
+    # print(f"Z2-Z1/x0: {(z2-z1)/x0}")
+    yaw = math.asin( (z2-z1) / x0)
     yaw_degrees = np.round(math.degrees(yaw),2)
     return yaw_degrees
 
@@ -233,8 +293,8 @@ def main():
     # cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
     # Create the aruco dictionary, this is for the specfic aruco marker we are using
-    aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_6X6_250)
-    # aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_7X7_250)
+    # aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_6X6_250)
+    aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_7X7_250)
     # aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_4X4_250)
     # aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_5X5_250)
     # Create the aruco parameters
@@ -250,7 +310,7 @@ def main():
     init_params.camera_fps = 15 # Set the camera to 15fps, I think this is redundant as 15fps is max for HD2K
     init_params.coordinate_units = sl.UNIT.MILLIMETER  # Use meter units (for depth measurements)
     init_params.depth_maximum_distance = 16764 # Set the maximum depth perception distance to 55 ft
-    # init_params.depth_minimum_distance = 13716 # Set the minimum depth perception distance to 45 ft
+    init_params.depth_minimum_distance = 13716 # Set the minimum depth perception distance to 45 ft
     # Set the positional tracking parameters
     track_params = sl.PositionalTrackingParameters()
     track_params.set_as_static = True # Set the camera to static mode
@@ -293,7 +353,24 @@ def main():
         image_data = image.get_data()
 
         # detect center of the aruco marker
-        center_x, center_y, center_x_right = find_aruco_marker(image_data, aruco_dict, parameters, cameraMatrix, distCoeffs)
+        # center_x, center_y, center_x_right = find_aruco_marker(image_data, aruco_dict, parameters, cameraMatrix, distCoeffs)
+
+        # center_x, center_y = getMousePos(image_data)
+        center_x, center_y = 1079, 682
+        center_x_right = center_x + 10
+
+
+        # show the image with a rectangle around the detected center
+        # resize the image
+        # image_data = image_data[center_y-100:center_y+100, center_x-100:center_x+100]
+        # cv2.rectangle(image_data, (center_x-10, center_y-10), (center_x+10, center_y+10), (0, 255, 0), 2)
+        # cv2.imshow("Raw Image with Detected Center", image_data)
+        # cv2.waitKey(0)
+        # cv2.destroyAllWindows()
+        
+
+        # detect center of the checkerboard
+        # center_x, center_y, center_x_right = find_checkerboard(image_data)
 
         print(f"----------------DEPTH------------------------")
         z1 = get_z_depth(depth, center_x, center_y)
@@ -316,10 +393,10 @@ def main():
         print(f"----------------Final Values------------------------")
         z3 = k * math.cos(math.radians(yaw))
         x3 = k * math.sin(math.radians(yaw))
-        Z = z1 + z3
-        X = x1 - x3
-        print(f"Z: {Z}, {mm_to_feet_inches_fractions(Z)}")
-        print(f"X: {X}, {mm_to_feet_inches_fractions(X)}")
+        Z = np.round(z1 + z3, 2)
+        X = np.round(x1 - x3, 2)
+        print(f"Z: {Z} mm, {mm_to_feet_inches_fractions(Z)}")
+        print(f"X: {X} mm, {mm_to_feet_inches_fractions(X)}")
         print(f"Yaw: {yaw}°")
         print(f"----------------END------------------------")
 
